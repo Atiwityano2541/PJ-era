@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Bangkok Amphoe Map</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.js"></script>
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        .search-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        .autocomplete-container {
+            width: 300px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        .search-input-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            width: 100%;
+        }
+        #AmphoeSearch {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #clearButton {
+            padding: 5px 10px;
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: none;
+        }
+        #clearButton:hover {
+            background: #d32f2f;
+        }
+        #suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 0 0 4px 4px;
+            z-index: 1000;
+        }
+        #suggestions li {
+            padding: 8px;
+            cursor: pointer;
+        }
+        #suggestions li:hover {
+            background: #f0f0f0;
+        }
+        #suggestions li.active {
+            background-color: #e0e0e0;
+        }
+        .stats-container {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="search-container">
+        <div class="autocomplete-container">
+            <div class="search-input-wrapper">
+                <input type="text" id="AmphoeSearch" placeholder="ค้นหาแขวง/ตำบล...">
+                <button id="clearButton">X</button>
+            </div>
+            <ul id="suggestions"></ul>
+        </div>
+        <div class="stats-container" id="stats">
+            จำนวนคอนโดในพื้นที่: <span id="condoCount">0</span>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+
+    <script>
+        class AmphoeAutocomplete {
+            constructor(searchInputId, suggestionsListId, onSelect) {
+                this.searchInput = document.getElementById(searchInputId);
+                this.suggestionsList = document.getElementById(suggestionsListId);
+                this.onSelect = onSelect;
+                this.AmphoeFeatures = [];
+                this.setupEventListeners();
+            }
+
+            setFeatures(features) {
+                this.AmphoeFeatures = features.map(feature => ({
+                    ...feature,
+                    properties: {
+                        ...feature.properties,
+                        displayName: this.removeDuplicateWords(feature.properties.AMP_NAME_T)
+                    }
+                }));
+            }
+
+            removeDuplicateWords(text) {
+                const words = text.split(' ');
+                return [...new Set(words)].join(' ');
+            }
+
+            setupEventListeners() {
+                this.searchInput.addEventListener('input', (e) => {
+                    this.handleInput(e.target.value);
+                });
+
+                document.addEventListener('click', (e) => {
+                    if (!e.target.closest('.autocomplete-container')) {
+                        this.clearSuggestions();
+                    }
+                });
+
+                this.searchInput.addEventListener('keydown', (e) => {
+                    const items = this.suggestionsList.querySelectorAll('li');
+                    const activeItem = this.suggestionsList.querySelector('li.active');
+                    let index = Array.from(items).indexOf(activeItem);
+
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        if (index < items.length - 1) {
+                            if (activeItem) activeItem.classList.remove('active');
+                            items[index + 1].classList.add('active');
+                            items[index + 1].scrollIntoView({ block: 'nearest' });
+                        }
+                    } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        if (index > 0) {
+                            if (activeItem) activeItem.classList.remove('active');
+                            items[index - 1].classList.add('active');
+                            items[index - 1].scrollIntoView({ block: 'nearest' });
+                        }
+                    } else if (e.key === 'Enter' && activeItem) {
+                        e.preventDefault();
+                        this.handleSelection(activeItem.dataset.originalName, activeItem.textContent);
+                    }
+                });
+            }
+
+            handleInput(searchText) {
+                searchText = searchText.toLowerCase();
+                this.clearSuggestions();
+                
+                if (searchText.length < 2) return;
+
+                const matches = this.AmphoeFeatures
+                    .filter(feature => 
+                        feature.properties.displayName.toLowerCase().includes(searchText) ||
+                        feature.properties.AMP_NAME_T.toLowerCase().includes(searchText)
+                    )
+                    .slice(0, 5);
+
+                this.displaySuggestions(matches);
+            }
+
+            displaySuggestions(matches) {
+                matches.forEach((feature, index) => {
+                    const li = document.createElement('li');
+                    li.textContent = feature.properties.displayName;
+                    li.dataset.originalName = feature.properties.AMP_NAME_T;
+                    if (index === 0) li.classList.add('active');
+                    li.addEventListener('click', () => {
+                        this.handleSelection(feature.properties.AMP_NAME_T, feature.properties.displayName);
+                    });
+                    this.suggestionsList.appendChild(li);
+                });
+            }
+
+            handleSelection(originalName, displayName) {
+                this.searchInput.value = displayName;
+                this.clearSuggestions();
+                if (this.onSelect) {
+                    this.onSelect(originalName);
+                }
+            }
+
+            clearSuggestions() {
+                this.suggestionsList.innerHTML = '';
+            }
+        }
+
+        mapboxgl.accessToken = 'pk.eyJ1IjoiYXRpd2l0IiwiYSI6ImNraHEzd2dhcjFoM3IzOG14OWE2NDN4d2EifQ.gpmCZaDqR21iu8k2jbv4PQ';
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/light-v11',
+            center: [100.547224, 13.737520],
+            zoom: 10
+        });
+
+        const AmphoeSearchInput = document.getElementById('AmphoeSearch');
+        const clearButton = document.getElementById('clearButton');
+
+        function filterCondosByAmphoe(AmphoeName) {
+            if (!AmphoeName) {
+                map.setFilter('bkk-points', null);
+                document.getElementById('condoCount').textContent = '0';
+            } else {
+                const selectedAmphoe = map.querySourceFeatures('Amphoe-bkk', {
+                    filter: ['==', ['get', 'AMP_NAME_T'], AmphoeName]
+                })[0];
+
+                if (selectedAmphoe) {
+                    const condos = map.querySourceFeatures('bkk', {});
+                    const selectedCondos = condos.filter(condo => {
+                        const point = condo.geometry.coordinates;
+                        return turf.booleanPointInPolygon(point, selectedAmphoe);
+                    });
+                    
+                    map.setFilter('bkk-points', ['==', ['get', 'AMP_NAME_T'], AmphoeName]);
+                    document.getElementById('condoCount').textContent = selectedCondos.length;
+                }
+            }
+        }
+
+        function clearSelection() {
+            AmphoeSearchInput.value = '';
+            clearButton.style.display = 'none';
+            map.setFilter('Amphoe-highlighted', ['==', ['get', 'AMP_NAME_T'], '']);
+            map.setFilter('Amphoe-highlighted-border', ['==', ['get', 'AMP_NAME_T'], '']);
+            filterCondosByAmphoe(null);
+            map.flyTo({
+                center: [100.547224, 13.737520],
+                zoom: 10,
+                essential: true
+            });
+            }
+
+        AmphoeSearchInput.addEventListener('input', () => {
+            if (AmphoeSearchInput.value) {
+                clearButton.style.display = 'block';
+            } else {
+                clearButton.style.display = 'none';
+            }
+        });
+
+        clearButton.addEventListener('click', clearSelection);
+
+        function highlightAmphoe(AmphoeName) {
+            if (AmphoeName) {
+                clearButton.style.display = 'block';
+            } else {
+                clearButton.style.display = 'none';
+            }
+
+            map.setFilter('Amphoe-highlighted', ['==', ['get', 'AMP_NAME_T'], AmphoeName]);
+            map.setFilter('Amphoe-highlighted-border', ['==', ['get', 'AMP_NAME_T'], AmphoeName]);
+            filterCondosByAmphoe(AmphoeName);
+
+            const feature = map.querySourceFeatures('Amphoe-bkk', {
+                filter: ['==', ['get', 'AMP_NAME_T'], AmphoeName]
+            })[0];
+
+            if (feature) {
+                const bounds = new mapboxgl.LngLatBounds();
+                if (feature.geometry.type === 'Polygon') {
+                    feature.geometry.coordinates[0].forEach(coord => {
+                        bounds.extend(coord);
+                    });
+                }
+
+                map.fitBounds(bounds, {
+                    padding: 50,
+                    maxZoom: 16
+                });
+            }
+        }
+
+        map.on('load', () => {
+            fetch('Amphoe-4326.geojson')
+                .then(response => response.json())
+                .then(data => {
+                    map.addSource('Amphoe-bkk', {
+                        'type': 'geojson',
+                        'data': data
+                    });
+
+                    map.addLayer({
+                        'id': 'Amphoe-borders',
+                        'type': 'line',
+                        'source': 'Amphoe-bkk',
+                        'layout': {},
+                        'paint': {
+                            'line-color': '#cccccc',
+                            'line-width': 1,
+                            'line-opacity': 0.5
+                        }
+                    });
+
+                    map.addLayer({
+                        'id': 'Amphoe-highlighted',
+                        'type': 'fill',
+                        'source': 'Amphoe-bkk',
+                        'layout': {},
+                        'paint': {
+                            'fill-color': '#FF5722',
+                            'fill-opacity': 0.2
+                        },
+                        'filter': ['==', ['get', 'AMP_NAME_T'], '']
+                    });
+
+                    map.addLayer({
+                        'id': 'Amphoe-highlighted-border',
+                        'type': 'line',
+                        'source': 'Amphoe-bkk',
+                        'paint': {
+                            'line-color': '#FF5722',
+                            'line-width': 3,
+                            'line-opacity': 0.8
+                        },
+                        'filter': ['==', ['get', 'AMP_NAME_T'], '']
+                    });
+
+                    const autocomplete = new AmphoeAutocomplete(
+                        'AmphoeSearch',
+                        'suggestions',
+                        highlightAmphoe
+                    );
+                    autocomplete.setFeatures(data.features);
+                })
+                .catch(err => console.error('Failed to load Amphoe GeoJSON data:', err));
+
+            fetch('Condo-with-Amphoe.geojson')
+                .then(response => response.json())
+                .then(data => {
+                    map.addSource('bkk', {
+                        type: 'geojson',
+                        data: data
+                    });
+
+                    map.addLayer({
+                        'id': 'bkk-points',
+                        'type': 'circle',
+                        'source': 'bkk',
+                        'paint': {
+                            'circle-radius': 6,
+                            'circle-color': '#FF5722',
+                            'circle-stroke-width': 2,
+                            'circle-stroke-color': '#000'
+                        }
+                    });
+
+                    map.on('click', 'bkk-points', (e) => {
+                        const properties = e.features[0].properties;
+                        const coordinates = e.features[0].geometry.coordinates.slice();
+                        const nameThai = properties.name_thai || 'ไม่ระบุชื่อ';
+                        const nameEng = properties.name_english || 'Unnamed';
+                        const address = properties.formatted_address || 'No Address';
+                        const Amphoe = properties.AMP_NAME_T || 'Unknown Amphoe';
+
+                        new mapboxgl.Popup()
+                            .setLngLat(coordinates)
+                            .setHTML(`
+                                <strong>${nameThai}</strong><br>
+                                <strong>${nameEng}</strong><br>
+                                ${address}<br>
+                                <em>แขวง/ตำบล: ${Amphoe}</em>
+                            `)
+                            .addTo(map);
+                    });
+
+                    map.on('mouseenter', 'bkk-points', () => {
+                        map.getCanvas().style.cursor = 'pointer';
+                    });
+
+                    map.on('mouseleave', 'bkk-points', () => {
+                        map.getCanvas().style.cursor = '';
+                    });
+                })
+                .catch(err => console.error('Failed to load Condo GeoJSON data:', err));
+        });
+    </script>
+</body>
+</html>

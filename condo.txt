@@ -1,0 +1,47 @@
+// // Load Condo GeoJSON data
+            // fetch('Condo-with-tambon.geojson')
+            //     .then(response => response.json())
+            //     .then(data => {
+            //         // Add GeoJSON data as a source
+            //         map.addSource('bkk', {
+            //             type: 'geojson',
+            //             data: data
+            //         });
+
+            //         // Add a layer to visualize points
+            //         map.addLayer({
+            //             'id': 'bkk-points',
+            //             'type': 'circle',
+            //             'source': 'bkk',
+            //             'paint': {
+            //                 'circle-radius': 6,
+            //                 'circle-color': '#FF5722',
+            //                 'circle-stroke-width': 2,
+            //                 'circle-stroke-color': '#000'
+            //             }
+            //         });
+
+            //         // Add popups to display property details
+            //         map.on('click', 'bkk-points', (e) => {
+            //             const properties = e.features[0].properties;
+            //             const coordinates = e.features[0].geometry.coordinates.slice();
+            //             const name = properties.name_english || 'Unknown Name';
+            //             const address = properties.formatted_address || 'No Address';
+
+            //             new mapboxgl.Popup()
+            //                 .setLngLat(coordinates)
+            //                 .setHTML(`<strong>${name}</strong><br>${address}`)
+            //                 .addTo(map);
+            //         });
+
+            //         // Change the cursor to a pointer when hovering over points
+            //         map.on('mouseenter', 'bkk-points', () => {
+            //             map.getCanvas().style.cursor = 'pointer';
+            //         });
+
+            //         // Reset the cursor when it leaves the points
+            //         map.on('mouseleave', 'bkk-points', () => {
+            //             map.getCanvas().style.cursor = '';
+            //         });
+            //     })
+            //     .catch(err => console.error('Failed to load Condo GeoJSON data:', err));
